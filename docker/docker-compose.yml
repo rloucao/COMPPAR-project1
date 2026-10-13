@@ -2,11 +2,18 @@
 #
 #   cd docker
 #   docker compose up -d --build --scale spark-worker=3
-#   WORKER_CORES=4 WORKER_MEMORY=6G docker compose up -d --scale spark-worker=2
+#   WORKER_CORES=4 WORKER_MEMORY=3G docker compose up -d --scale spark-worker=2
+#
+# Memory budget: everything must fit in Docker Desktop's memory limit
+# (Settings -> Resources). Defaults (2 cores, 2G per worker; 1536m executors and
+# a 2g driver, see scripts/run_pipeline.sh) fit 3 workers in ~8 GB.
 #
 # JupyterLab (the driver) runs in the "client" container: http://localhost:8888
 # (token: compar). Open notebooks/pipeline.ipynb and set
-# MASTER = "spark://spark-master:7077".
+# MASTER = "spark://spark-master:7077", DRIVER_MEMORY = "2g", EXECUTOR_MEMORY = "1536m".
+#
+# The driver's Spark UI is published on the host as http://localhost:4140
+# (not 4040, which a local-mode notebook session on the host already uses).
 #
 # Data, output and results folders are mounted at the SAME paths on every
 # container: executors read /data and write /output themselves, so the driver
@@ -40,7 +47,7 @@ services:
       /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
       spark://spark-master:7077
       --cores ${WORKER_CORES:-2}
-      --memory ${WORKER_MEMORY:-4G}
+      --memory ${WORKER_MEMORY:-2G}
     depends_on:
       - spark-master
     volumes: *shared-volumes
@@ -56,7 +63,7 @@ services:
     command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.root_dir=/app
     ports:
       - "8888:8888"
-      - "4040-4050:4040-4050"   # Spark application UI of the driver
+      - "4140-4150:4040-4050"   # driver's Spark UI: host 4140 -> container 4040
     depends_on:
       - spark-master
     volumes: *shared-volumes

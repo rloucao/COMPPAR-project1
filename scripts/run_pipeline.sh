@@ -20,9 +20,22 @@ case "$MODE" in
       --cwd "$ROOT/notebooks" -p MASTER "local[*]" "$@"
     ;;
   cluster)
-    docker compose -f "$ROOT/docker/docker-compose.yml" exec client \
+    COMPOSE=(docker compose -f "$ROOT/docker/docker-compose.yml")
+    # Total cores of the ALIVE workers. With spark.cores.max set to it, the
+    # image's spark.scheduler.minRegisteredResourcesRatio=1.0 makes the driver
+    # wait for every executor before the first job (otherwise standalone mode
+    # starts as soon as one executor has registered and skews the timings).
+    CORES="$("${COMPOSE[@]}" exec -T client python3 -c '
+import json, urllib.request
+workers = json.load(urllib.request.urlopen("http://spark-master:8080/json/"))["workers"]
+print(sum(w["cores"] for w in workers if w["state"] == "ALIVE"))')"
+    echo "cluster: $CORES cores on alive workers"
+    # Memory defaults sized for the Docker workers (--memory 2G); later -p
+    # arguments override them, e.g. -p EXECUTOR_MEMORY 2g with WORKER_MEMORY=3G.
+    "${COMPOSE[@]}" exec -e PYSPARK_SUBMIT_ARGS="--conf spark.cores.max=$CORES pyspark-shell" client \
       papermill /app/notebooks/pipeline.ipynb "/results/notebooks/pipeline-$STAMP.ipynb" \
-      --cwd /app/notebooks -p MASTER spark://spark-master:7077 "$@"
+      --cwd /app/notebooks -p MASTER spark://spark-master:7077 \
+      -p DRIVER_MEMORY 2g -p EXECUTOR_MEMORY 1536m "$@"
     ;;
   *)
     echo "unknown mode '$MODE' (use local or cluster)" >&2; exit 1

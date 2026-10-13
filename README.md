@@ -72,15 +72,34 @@ ignores new settings.
 
 ```bash
 cd docker
-WORKER_CORES=2 WORKER_MEMORY=4G docker compose up -d --build --scale spark-worker=3
+docker compose up -d --build --scale spark-worker=3     # 3 workers x 2 cores x 2 GB
 ```
 
+**Memory:** every container shares Docker Desktop's memory limit (Settings →
+Resources; 8 GB here). The defaults fit that: workers `--memory 2G`, executors
+`1536m`, driver `2g`. For bigger workers, raise Docker's limit first, then e.g.
+`WORKER_MEMORY=3G docker compose up -d --scale spark-worker=3` and pass
+`-p EXECUTOR_MEMORY 2g`.
+
+**Fair measurements:** the Docker "cluster" runs on the same CPU cores as
+your Mac, so shut down any local-mode notebook kernel before timing cluster
+runs.
+
 Open JupyterLab at <http://localhost:8888> (token `compar`), open
-`notebooks/pipeline.ipynb` and set `MASTER = "spark://spark-master:7077"`.
-The data paths switch to `/data`, `/output` and `/results` automatically.
+`notebooks/pipeline.ipynb` and set `MASTER = "spark://spark-master:7077"`,
+`DRIVER_MEMORY = "2g"`, `EXECUTOR_MEMORY = "1536m"`. The data paths switch to
+`/data`, `/output` and `/results` automatically.
 
 - Spark master UI: <http://localhost:8080>
-- Application UI (while the session is alive): <http://localhost:4040>
+- Application UI (while the session is alive): <http://localhost:4140>.
+  The container's port 4040 is published as 4140 on the host, because a
+  local-mode notebook session already uses 4040.
+
+Non-default Spark settings baked into the image (`docker/Dockerfile`):
+`spark.scheduler.minRegisteredResourcesRatio=1.0` (plus a 60 s wait limit).
+`scripts/run_pipeline.sh cluster` also sets `spark.cores.max` to the cores of
+the alive workers, so the first job only starts once every executor has
+registered.
 
 ### From the command line (papermill)
 
