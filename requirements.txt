@@ -1,0 +1,8 @@
+# Local (local[*]) runs. Keep pyspark in sync with the Docker image tag.
+pyspark==4.0.1
+pandas
+pyarrow
+requests
+matplotlib
+jupyterlab
+papermill

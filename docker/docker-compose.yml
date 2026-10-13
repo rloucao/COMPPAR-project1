@@ -1,0 +1,62 @@
+# Spark standalone cluster: 1 master + N workers + 1 driver ("client") container.
+#
+#   cd docker
+#   docker compose up -d --build --scale spark-worker=3
+#   WORKER_CORES=4 WORKER_MEMORY=6G docker compose up -d --scale spark-worker=2
+#
+# JupyterLab (the driver) runs in the "client" container: http://localhost:8888
+# (token: compar). Open notebooks/pipeline.ipynb and set
+# MASTER = "spark://spark-master:7077".
+#
+# Data, output and results folders are mounted at the SAME paths on every
+# container: executors read /data and write /output themselves, so the driver
+# alone having the files is not enough.
+
+x-spark-image: &spark-image
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: compar-taxi-spark:4.0.1
+
+x-shared-volumes: &shared-volumes
+  - ../data:/data
+  - ../output:/output
+  - ../results:/results
+  - ../notebooks:/app/notebooks
+
+services:
+
+  spark-master:
+    <<: *spark-image
+    container_name: spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+
+  spark-worker:
+    <<: *spark-image
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077
+      --cores ${WORKER_CORES:-2}
+      --memory ${WORKER_MEMORY:-4G}
+    depends_on:
+      - spark-master
+    volumes: *shared-volumes
+
+  client:
+    <<: *spark-image
+    container_name: spark-client
+    hostname: spark-client      # executors connect back to the driver by this name
+    user: root
+    environment:
+      HOME: /tmp
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-compar}
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.root_dir=/app
+    ports:
+      - "8888:8888"
+      - "4040-4050:4040-4050"   # Spark application UI of the driver
+    depends_on:
+      - spark-master
+    volumes: *shared-volumes

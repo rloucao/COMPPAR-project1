@@ -1,0 +1,26 @@
+# Dataset and generated data - never commit (see README for download steps)
+data/
+output/
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Executed notebook copies from papermill (large, regenerate them instead)
+results/notebooks/
+
+# Python / IDE
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+.idea/
+.vscode/
+.DS_Store
+
+# LaTeX build artefacts
+report/*.aux
+report/*.log
+report/*.out
+report/*.synctex.gz
+report/*.fdb_latexmk
+report/*.fls

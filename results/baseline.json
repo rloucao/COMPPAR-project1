@@ -1,0 +1,114 @@
+{
+  "app_id": "local-1791891393858",
+  "metadata": {
+    "run_name": "baseline",
+    "master": "local[*]",
+    "spark_version": "4.0.1",
+    "num_executors": 1,
+    "total_cores": 10,
+    "years": [
+      2024
+    ],
+    "months": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "fraction": 0.1,
+    "ops": [
+      "m2",
+      "m3",
+      "o2",
+      "o3"
+    ],
+    "data_dir": "../data",
+    "host": "unknown1aa448f27515.lan",
+    "spark_conf": {
+      "spark.driver.memory": "8g"
+    },
+    "total_wall_time_s": 4.09
+  },
+  "runs": {
+    "m1": {
+      "stages": [
+        {
+          "stage_id": 12,
+          "name": "collect at /var/folders/c9/lj6q8jdd421300db1hf9ssg40000gn/T/ipykernel_57842/2181839698.py:4",
+          "duration_ms": 3468,
+          "num_tasks": 120,
+          "task_median_ms": 21.0,
+          "task_max_ms": 1706.0,
+          "skew_max_over_median": 81.24,
+          "input_bytes": 540054847,
+          "shuffle_read_bytes": 0,
+          "shuffle_write_bytes": 4261,
+          "memory_spilled_bytes": 0,
+          "disk_spilled_bytes": 0
+        },
+        {
+          "stage_id": 14,
+          "name": "collect at /var/folders/c9/lj6q8jdd421300db1hf9ssg40000gn/T/ipykernel_57842/2181839698.py:4",
+          "duration_ms": 57,
+          "num_tasks": 1,
+          "task_median_ms": 39.0,
+          "task_max_ms": 39.0,
+          "skew_max_over_median": 1.0,
+          "input_bytes": 0,
+          "shuffle_read_bytes": 4261,
+          "shuffle_write_bytes": 0,
+          "memory_spilled_bytes": 0,
+          "disk_spilled_bytes": 0
+        },
+        {
+          "stage_id": 16,
+          "name": "collect at /var/folders/c9/lj6q8jdd421300db1hf9ssg40000gn/T/ipykernel_57842/2181839698.py:4",
+          "duration_ms": 21,
+          "num_tasks": 1,
+          "task_median_ms": 8.0,
+          "task_max_ms": 8.0,
+          "skew_max_over_median": 1.0,
+          "input_bytes": 0,
+          "shuffle_read_bytes": 4261,
+          "shuffle_write_bytes": 103,
+          "memory_spilled_bytes": 0,
+          "disk_spilled_bytes": 0
+        },
+        {
+          "stage_id": 19,
+          "name": "collect at /var/folders/c9/lj6q8jdd421300db1hf9ssg40000gn/T/ipykernel_57842/2181839698.py:4",
+          "duration_ms": 5,
+          "num_tasks": 1,
+          "task_median_ms": 0.0,
+          "task_max_ms": 0.0,
+          "skew_max_over_median": null,
+          "input_bytes": 0,
+          "shuffle_read_bytes": 103,
+          "shuffle_write_bytes": 0,
+          "memory_spilled_bytes": 0,
+          "disk_spilled_bytes": 0
+        }
+      ],
+      "wall_time_s": 4.09,
+      "num_jobs": 4,
+      "num_stages": 4,
+      "num_tasks": 123,
+      "executor_run_time_ms": 32035,
+      "executor_cpu_time_ms": 23259,
+      "input_bytes": 540054847,
+      "output_bytes": 0,
+      "shuffle_read_bytes": 8625,
+      "shuffle_write_bytes": 4364,
+      "memory_spilled_bytes": 0,
+      "disk_spilled_bytes": 0
+    }
+  }
+}
