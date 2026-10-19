@@ -6,7 +6,7 @@ metastore_db/
 derby.log
 
 # Executed notebook copies from papermill (large, regenerate them instead)
-results/notebooks/
+results/
 
 # Python / IDE
 __pycache__/
@@ -24,3 +24,6 @@ report/*.out
 report/*.synctex.gz
 report/*.fdb_latexmk
 report/*.fls
+report/*.bbl
+report/*.blg
+

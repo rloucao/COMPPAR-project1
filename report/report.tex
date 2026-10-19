@@ -1,0 +1,243 @@
+% Build:  cd report && latexmk -pdf report.tex
+%
+% Red [TODO: ...] markers show what still has to be written; delete each one
+% when its section is done. Numbers come from results/*.json (medians of 3 runs)
+% and output/m1_cleaning_stats.csv.
+
+\documentclass[10pt,a4paper]{article}
+
+\usepackage[margin=1.7cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[font=small,labelfont=bf,skip=3pt]{caption}
+\usepackage{fancyvrb}
+\usepackage[hidelinks]{hyperref}
+\usepackage{soul}
+\usepackage[compact]{titlesec}
+
+\titlespacing*{\section}{0pt}{7pt plus 2pt}{3pt}
+\titlespacing*{\subsection}{0pt}{5pt plus 2pt}{2pt}
+\titlespacing*{\paragraph}{0pt}{3pt plus 1pt}{0.6em}
+\setlength{\textfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\floatsep}{6pt plus 2pt minus 2pt}
+\setlength{\intextsep}{6pt plus 2pt minus 2pt}
+\setlist{itemsep=0pt,topsep=1pt,parsep=0pt,leftmargin=*}
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+\newcommand{\figplaceholder}[2]{%
+  \IfFileExists{#1}{\includegraphics[width=\linewidth]{#1}}%
+  {\fbox{\parbox[c][3.5cm][c]{0.9\linewidth}{\centering\small\textcolor{red}{#2}}}}}
+
+\title{\vspace{-1.6cm}Performance Engineering of a Spark Pipeline\\on the NYC Yellow Taxi Trip Records}
+\author{Rodrigo Loução Nº73984 \& Guilherme Ferreira Nº78037 \\
+  \small ComPar 2026/27 - Project Assignment 1}
+\date{\vspace{-0.9cm}}
+
+\begin{document}
+\maketitle
+
+% =====================================================================
+\section{Introduction}
+
+We analyse the NYC Taxi \& Limousine Commission yellow-cab trip records~\cite{tlc} for 2024 (41.2\,M trips, 12 monthly Parquet files, 515\,MB) with a PySpark~4.0.1 pipeline~\cite{spark-sql}. We started by cleaning the data and enforcing a schema (\textit{M1}), then we performed a temporal demand analysis (\textit{M2}) and zone-level statistics with window functions (\textit{M3}). Additionally, we chose two optional operations: origin-destination flow analysis (\textit{O2}) and demand-forecasting features (\textit{O3}). Each operation independently consumes the cleaned trips produced by \textit{M1} (Table~\ref{tab:ops}). This workload is interesting from a performance standpoint because every operation reads the same 41\,M trips, \textit{O2} groups a high-cardinality key (49\,k routes) and \textit{O3} needs a self-join, so it exposes repeated scans, shuffles and join strategies. We profiled it on an Apple M4 laptop and on a Spark standalone cluster in Docker, and implemented every optimisation as a switch in the code (Section~\ref{optmisation}).
+\todo{Run the experiments on my and Guilherme's computers to simulate a real cluster.}
+
+% =====================================================================
+\section{Pipeline}
+
+\begin{table}[!htb]
+\centering\footnotesize
+\caption{Pipeline operations and the Spark features each one exercises.}
+\label{tab:ops}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Op & What it computes & Main Spark features / cost drivers \\
+\midrule
+M1 & Schema enforcement, 7 validity criteria, per-year removal counts & Scan + filter, single-pass aggregate \\
+M2 & Trips, mean fare/duration/distance per (borough, weekday, hour) & Broadcast join, group-by, partitioned write \\
+M3 & Per zone-month stats; rank, rolling 3-month share, $1.5\sigma$ flag & Aggregate then 4 window specs \\
+O2 & Monthly route counts, outbound share, top-20, Q1/Q3 reversals & High-cardinality shuffle, pivot, 2 joins \\
+O3 & Hourly zone demand, historical mean/variance, 4-week lag & Self-join, join-back of bucket statistics \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Architectural decisions.} We used the \emph{DataFrame API} for all operations: helper functions (time features, zone joins) are shared by \textit{M2}--\textit{O3}, Spark SQL would compile to the same Catalyst plan, and RDDs would lose column pruning and filter pushdown. Each monthly file is read separately and mapped to a canonical schema, because column names and types change across years, and the 12 scans are unioned. Each operation is a function that returns a lazy DataFrame, and only its write is profiled; the baseline deliberately has no caching. \textit{M3} and \textit{O2} aggregate before their windows and joins (3\,060 and 352\,k rows instead of 39\,M). The pipeline is a notebook driven by papermill (command-line parameters), the session time zone is UTC (identical results locally and on the cluster), and the Lab~3 profiler was extended with per-stage durations, a task-skew ratio and JSON export. Figure~\ref{fig:plan} shows the plan of \textit{M2}.
+
+\paragraph{Data-quality decisions.} \textit{M1} removes 2\,210\,549 of the 41\,169\,720 records of 2024 (5.4\%; the criteria overlap): \texttt{fare\_amount}~$\le 0$ (748\,284), \texttt{trip\_distance}~$\le 0$ (776\,305), \texttt{passenger\_count} $=0$ or $>6$ (401\,638), dropoff $\le$ pickup (13\,510), location outside 1--263 (425\,660) and, as an added criterion, pickups outside the month of their source file (420, with dates from 2002 to 2026, which would bias the per-weekday means of \textit{O3} by up to 7\%). No required field is null. The 4.09\,M trips (9.9\%) without \texttt{passenger\_count} are kept: they also lack \texttt{RatecodeID} and have \texttt{payment\_type}~0, but are otherwise valid, the brief's rule does not cover missing values, and no later operation uses the field. The \textit{M3} flag compares a month with the \emph{previous} 3 months (with the current month included, a 3-value window can never exceed $1.15\sigma$), using month indices (\texttt{rangeBetween}) so that missing months count as 0 trips. In \textit{O2}, a reversal means that the Mar$-$Jan and Sep$-$Jul share changes have opposite signs, reported for the top-20 routes (by total trips in 2024). In \textit{O3}, means and variances include zero-trip hours; averaging only the observed hours overstates the median bucket $2.5\times$.
+
+\begin{figure}[!htb]
+\centering
+\begin{minipage}{0.52\linewidth}
+\begin{Verbatim}[fontsize=\scriptsize]
+HashAggregate (final)          <- averages
++- Exchange hashpartitioning   <- shuffle, 2.2 MB
+   +- HashAggregate (partial)  <- per-task pre-sum
+      +- BroadcastHashJoin     <- + borough
+         :- Union of 12 x Filter (M1) <- Scan parquet [7 cols]
+         +- BroadcastExchange <- Scan csv (zones, 265 rows)
+\end{Verbatim}
+\end{minipage}\hfill
+\begin{minipage}{0.45\linewidth}
+\caption{Simplified physical plan of \textit{M2} (read bottom-up), from \texttt{explain(mode="formatted")}. Spark reads 7 of the 19 columns, broadcasts the zone table and pre-aggregates before the only shuffle.}
+\label{fig:plan}
+\end{minipage}
+\end{figure}
+
+% =====================================================================
+\section{Profiling and Baseline} \label{baseline}
+
+\paragraph{Experimental setup.} All experiments ran on one Apple M4 laptop (10 cores, 16\,GB RAM). \emph{Local}: \texttt{local[*]}, 8\,GB driver, Java~21. \emph{Cluster}: Spark standalone in Docker with 1 master and 3 workers $\times$ 2 cores (1536\,MB executors, 2\,GB driver, Java~17), all sharing 10 CPUs and 7.75\,GB. Non-default settings: \texttt{spark.sql.session.timeZone=UTC} and, on the cluster, \texttt{spark.scheduler.minRegisteredResourcesRatio=1.0} with \texttt{spark.cores.max} set to the alive cores, so jobs only start once every executor has registered. Each configuration runs 3 times after a discarded warm-up run (median reported), with only one environment running at a time. Metrics come from the Spark REST API via our profiler~\cite{spark-monitoring}.
+
+\begin{table}[!htb]
+\centering\footnotesize
+\caption{Baseline per operation: wall time (s, median of 3 runs), tasks, shuffle write (MB) and skew (max/median task time of the worst stage), run r1. Every operation reads the 515\,MB input once, except \textit{O3} (2\,575\,MB).}
+\label{tab:baseline}
+\begin{tabular}{@{}lrrrrrrrr@{}}
+\toprule
+& \multicolumn{4}{c}{Local (10 cores)} & \multicolumn{4}{c}{Cluster (3$\times$2 cores)} \\
+\cmidrule(lr){2-5}\cmidrule(l){6-9}
+Op & Time & Tasks & Shuffle & Skew & Time & Tasks & Shuffle & Skew \\
+\midrule
+M1 & 4.0  & 123 & 0.0   & 35$\times$  & 9.9  & 75  & 0.0   & 5.0$\times$ \\
+M2 & 7.7  & 123 & 2.2   & 72$\times$  & 13.9 & 75  & 2.2   & 2.9$\times$ \\
+M3 & 6.6  & 126 & 2.2   & 78$\times$  & 16.6 & 78  & 2.2   & 2.4$\times$ \\
+O2 & 9.7  & 195 & 90.0  & 130$\times$ & 15.1 & 122 & 86.1  & 2.7$\times$ \\
+O3 & 36.0 & 672 & 119.3 & 380$\times$ & 72.5 & 416 & 116.8 & 4.3$\times$ \\
+\midrule
+Total & \multicolumn{4}{l}{63.3 (range 62.8--72.5)} & \multicolumn{4}{l}{121.1 (range 111.0--153.5)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Bottlenecks.}
+\begin{itemize}
+  \item \emph{Repeated scans}: The same 515\,MB are scanned 9 times per run (4.6\,GB and 371\,M rows, for 39\,M valid trips): \textit{M1}, \textit{M2}, \textit{M3} and \textit{O2} once each and \textit{O3} five times, because intermediate DataFrames are lazy and recomputed by every consumer. The scan stages are 91\% (local) and 94\% (cluster) of all the task time.
+  \item \emph{O3's performance}: It accounts for 56\% (local) and 57\% (cluster) of the runtime, with 5 concurrent scans that compete for the cores and a double exchange before the self-join. On the cluster its stage durations form a staircase (25 to 81\,s) while the median task takes only 0.7--2.3\,s, so the stage duration overstates the work.
+  \item \emph{Empty read tasks}: Each of the 12 per-file scans is split into one piece per core, but the files only have 3--4 Parquet row groups of $\approx$16.5\,MB, so locally most read tasks are empty (median 10--34\,ms, slowest 1.2--3.8\,s; skew 35--380$\times$, only 2--5$\times$ on the cluster).
+  \item \emph{O2 high cardinality}: Reading is only 66--83\% of \textit{O2}'s task time; the rest is grouping 49\,k routes, windows, pivot and joins, with 86--90\,MB shuffled.
+  \item \emph{Sort-merge joins on tiny tables}: 2 in \textit{O2} and 3 in \textit{O3}, against small tables whose size Spark cannot estimate before running.
+\end{itemize}
+Other usual bottlenecks were measured and are not a problem here: waiting for shuffle data takes at most 0.02\,s per operation, there is no spill, garbage collection is 2.5--4.7\% of the task time and the cores are busy 74--95\% of the time. This means that the pipeline is slow because it does too much work, mainly reading.
+
+% =====================================================================
+\section{Optimisation Study} \label{optmisation}
+Each optimisation is a switch in the code (all switches off is the baseline). Each configuration ran 3 times locally and 3 times on the cluster, next to a control run of the baseline in the same session (local 69.1\,s, cluster 95.8\,s, median); on the cluster the configurations were interleaved. The speed of the machine changes between runs (up to 17\% for operations that a switch does not change), so these unaffected operations are used as an extra check. The outputs of every configuration are identical to the control's. This check also found that the top-20 of \textit{O2} changed between runs because of ties in quiet boroughs, which we fixed by breaking ties with the zone IDs.
+
+\subsection{Reading the input once} \label{opt:cache}
+\textbf{(a) Bottleneck.} The same 515\,MB are scanned 9 times per run, and the scan stages are 92\% of the task time.
+\textbf{(b) Hypothesis.} Reading the Parquet files once and keeping them in memory removes 8 of the 9 scans, which should reduce the runtime a lot; building the cache will make \textit{M1} slower.
+\textbf{(c) Change.} The 9 columns used by \textit{M1}--\textit{O3} are cached, and the statistics of \textit{M1} fill the cache, so its cost is included in \textit{M1}.
+\textbf{(d) Result.} The total goes from 69.1\,s to 33.9\,s (2.04$\times$ faster) and the task time from 621\,s to 300\,s. \textit{M1} is slower (3.7\,s $\rightarrow$ 8.6\,s), but \textit{M2} (8.3\,s $\rightarrow$ 3.3\,s), \textit{M3} (7.5\,s $\rightarrow$ 2.8\,s), \textit{O2} (9.8\,s $\rightarrow$ 7.1\,s) and \textit{O3} (41.7\,s $\rightarrow$ 12.7\,s) are faster. On the cluster the total goes from 95.8\,s to 48.3\,s (1.98$\times$) and \textit{O3} from 55.6\,s to 16.1\,s. The hypothesis is confirmed.
+
+\subsection{O3: caching the intermediate table}
+\textbf{(a) Bottleneck.} \textit{O3} is 58\% of the runtime: its \texttt{hourly} table is used 5 times and computed again from the input each time.
+\textbf{(b) Hypothesis.} Caching the intermediate tables reused inside an operation (\texttt{hourly} in \textit{O3}, 5 uses; \texttt{routes} in \textit{O2}, 3 uses) avoids computing them again.
+\textbf{(c) Change.} A first version cached both: \textit{O3} became faster (36.7\,s $\rightarrow$ 19.9\,s), but \textit{O2} almost two times slower (9.2\,s $\rightarrow$ 17.2\,s, from 195 to 1\,371 tasks), because Spark already reuses the shuffle of \textit{O2}, and a cached table keeps all the 200 shuffle partitions (\texttt{spark.sql.optimizer.canChangeCachedPlanOutputPartitioning} is \texttt{false} by default). The final version only caches \texttt{hourly} and sets this option to \texttt{true}.
+\textbf{(d) Result.} \textit{O3} goes from 41.7\,s to 10.0\,s (it reads 578\,MB instead of 2\,575\,MB and runs 269 tasks instead of 672) and the total from 69.1\,s to 37.6\,s (1.84$\times$ faster); \textit{O2} is unchanged (9.6\,s). On the cluster the total goes from 95.8\,s to 46.1\,s (2.08$\times$). Together with Section~\ref{opt:cache}, the total is 27.8\,s locally (2.49$\times$) and 37.7\,s on the cluster (2.54$\times$). The hypothesis is confirmed.
+
+\subsection{Empty read tasks}
+\textbf{(a) Bottleneck.} 120 read tasks per scan locally, but only 3--4 row groups per file (skew up to 226$\times$).
+\textbf{(b) Hypothesis.} Splits of one row group remove the empty tasks and balance the read stage.
+\textbf{(c) Change.} \texttt{spark.sql.files.maxPartitionBytes=16m} and \texttt{spark.sql.files.minPartitionNum=1}.
+\textbf{(d) Result.} The tasks go from 1\,239 to 582 and the skew from 226$\times$ to 3.8$\times$, but the total only changes from 69.1\,s to 64.2\,s (61.9\,s $\rightarrow$ 61.9\,s in a first batch), within the variation of the machine. Rejected: the empty tasks only took milliseconds, so the skew was high but did not cost time.
+
+\subsection{O3: one shuffle less before the self-join}
+\textbf{(a) Bottleneck.} \texttt{hourly} is shuffled twice: aggregated by (zone, date, weekday, hour) but self-joined by (zone, date, hour).
+\textbf{(b) Hypothesis.} Aggregating by exactly the join keys lets the join reuse that shuffle.
+\textbf{(c) Change.} Aggregate by (zone, date, hour) and derive the weekday from the date afterwards.
+\textbf{(d) Result.} \textit{O3}'s shuffle goes from 119\,MB to 101\,MB and \textit{O3} from 41.7\,s to 36.5\,s, but the unaffected operations also became 11\% faster, so the real gain is close to zero. Rejected: the removed shuffle is small next to the 5 scans of \textit{O3}.
+
+\subsection{Sort-merge joins on tiny tables}
+\textbf{(a) Bottleneck.} Sort-merge joins against small tables Spark cannot size before running (2 in \textit{O2}, 3 in \textit{O3}); AQE switches some to broadcast only after shuffling the large side.
+\textbf{(b) Hypothesis.} Broadcast hints avoid shuffling the large side of these joins.
+\textbf{(c) Change.} \texttt{F.broadcast} on \textit{O2}'s top-20 (120 rows) and trend (49\,k rows) and \textit{O3}'s \texttt{n\_days} (7 rows) and \texttt{stats} (44\,k rows).
+\textbf{(d) Result.} The shuffle goes from 214\,MB to 145\,MB (\textit{O2}: 90\,MB $\rightarrow$ 41\,MB) and the total from 69.1\,s to 55.9\,s, but \textit{M1}--\textit{M3}, which do not use these joins, were also 17\% faster, and a first batch showed no gain (61.9\,s $\rightarrow$ 63.8\,s). Rejected for time: waiting for shuffle data was already $\approx$0\,s.
+
+\paragraph{All optimisations combined.} With all five switches the total is 25.1\,s locally (2.76$\times$ faster), compared with 27.8\,s with only optimisations 1 and 2: once the repeated scans are removed, the shuffles and the number of tasks become a bigger part of what is left, and optimisations 3--5 give a further 10\%. On the cluster, all five give 38.7\,s (2.48$\times$), the same as 1 and 2 alone (37.7\,s), because with only 6 cores the read tasks were not empty in the first place.
+
+\begin{table}[!htb]
+\centering\footnotesize
+\caption{Summary of optimisations (median of 3 runs). ``Before'' is the control run of the same session. Optimisations 3--5 were not run alone on the cluster, because locally they showed no real gain.}
+\label{tab:summary}
+\begin{tabular}{@{}llrrrrl@{}}
+\toprule
+& & \multicolumn{2}{c}{Local (s)} & \multicolumn{2}{c}{Cluster (s)} & Key metric \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+Optimisation & Targets & Before & After & Before & After & before $\rightarrow$ after \\
+\midrule
+1. Reading the input once      & M1--O3 & 69.1 & 33.9 & 95.8 & 48.3 & scans 9 $\rightarrow$ 1 \\
+2. Caching O3's \texttt{hourly}& O3     & 69.1 & 37.6 & 95.8 & 46.1 & O3 41.7 $\rightarrow$ 10.0\,s \\
+3. Read splits = row groups    & scans  & 69.1 & 64.2 & --   & --   & skew 226 $\rightarrow$ 3.8$\times$ \\
+4. Aligned self-join keys      & O3     & 69.1 & 64.5 & --   & --   & O3 shuffle 119 $\rightarrow$ 101\,MB \\
+5. Broadcast hints             & O2, O3 & 69.1 & 55.9 & --   & --   & shuffle 214 $\rightarrow$ 145\,MB \\
+\midrule
+1 + 2                          &        & 69.1 & 27.8 & 95.8 & 37.7 & 2.49$\times$ / 2.54$\times$ \\
+All combined                   &        & 69.1 & 25.1 & 95.8 & 38.7 & 2.76$\times$ / 2.48$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =====================================================================
+\section{Analysis}
+% Figures are written by notebooks/analysis.ipynb into report/figures/.
+
+\begin{figure}[!htb]
+\centering
+\begin{minipage}{0.48\linewidth}\centering
+\figplaceholder{figures/scale_fraction.pdf}{Execution time vs.\ dataset fraction\\(run analysis.ipynb, section 5a)}
+\caption{Wall-clock time of the optimised pipeline on the cluster (3 workers) for 1, 2, 3, 6 and 12 months of 2024 and for 2024+2025. Dashed: linear scaling through the one-year point.}
+\label{fig:scale}
+\end{minipage}\hfill
+\begin{minipage}{0.48\linewidth}\centering
+\figplaceholder{figures/speedup_workers.pdf}{Speedup vs.\ number of workers\\(run analysis.ipynb, section 5b)}
+\caption{Speedup of the optimised pipeline (2024) with 1--5 workers of 2 cores each, relative to 1 worker; E is the efficiency. Dashed: ideal (linear) speedup.}
+\label{fig:speedup}
+\end{minipage}
+\end{figure}
+
+\paragraph{Dataset scale.} We ran the optimised pipeline (all five switches) on the cluster with real subsets of the data (Figure~\ref{fig:scale}); we used subsets instead of a random sample because the sample is taken after reading, so the files would still be read completely. Up to one year the time grows sub-linearly: 14.2\,s for 1 month (3.0\,M trips, 7\% of the year) and 38.7\,s for one year (41.2\,M trips), so the time per million trips falls from 4.8\,s to 0.94\,s. A straight line through these points crosses zero trips at about 12\,s, the cost that does not depend on the input size: starting the jobs and stages, broadcasting the zone table, running the small final stages and writing the outputs. Two years (89.9\,M trips, 2.18$\times$ one year) take 182.7\,s, 4.7$\times$ one year, which is much worse than linear: the cache no longer fits in the memory of the executors, so it is written to their local disks ($\approx$2\,GB each), and garbage collection grows from 3\% to 9\% of the task time. Each size was run once, except one year (3 runs).
+
+\paragraph{Cluster size.} With 1 to 5 workers of 2 cores each, we computed the speedup $S(n)=T(1)/T(n)$ and the efficiency $E(n)=S(n)/n$ (Figure~\ref{fig:speedup}). Up to 3 workers the pipeline becomes faster, but much less than the ideal: $S=1.31$ with 2 workers ($E=0.65$) and 1.84 with 3 ($E=0.61$). Building the cache in \textit{M1} and the final stages of \textit{O2} (1--28 tasks) do not run in parallel, and distributing the work has a cost: for the same work, the task time grows from 129\,s with 1 worker to 214\,s with 3. With 4 and 5 workers the pipeline is slower than with 3 (63.7\,s and 83.4\,s, $E=0.28$ and $0.17$): the task time grows to 391\,s and 592\,s and the share of it spent on the CPU falls from 87\% to 63\%, meaning that each task is much slower. All the workers share one laptop: 8--10 executor cores plus the driver and macOS oversubscribe its 10 cores (only 4 are performance cores), and 4--5 workers of $\approx$1.9\,GB plus the driver need more than the 7.75\,GB given to Docker. Therefore, on this machine the best configuration is 3 workers. Each number of workers was run once, except 3 workers (3 runs).
+
+% =====================================================================
+\section{Discussion}
+
+\paragraph{Remaining bottlenecks.} After the optimisations, building the cache in \textit{M1} is the most expensive step (28\% of the runtime locally, 35\% on the cluster). The cached year takes 1.4\,GB in memory, compared with 515\,MB of Parquet on disk, which is most of the $\approx$2.2\,GB the 3 executors have for execution and storage; with two years, each executor keeps 0\,MB of it in memory and $\approx$2\,GB on disk. \textit{O2} is now 25\% of the runtime, because its top-20 and trend branches each read the cached table again (4.2\,GB read from memory), so it would have to be restructured to compute its results from a single aggregation.
+
+\paragraph{Limitations.} All the experiments ran on one laptop: the Docker cluster shares its 10 cores (4 performance and 6 efficiency) and memory, and has no real network, so the cost of shuffles is underestimated and the speedup is limited by the machine. The timings varied between sessions (up to 17\%; the cluster control between 82 and 146\,s), mainly because of the memory pressure of the laptop. Same-session controls, interleaving and unaffected operations reduce this, but with 3 runs (1 for most scaling points) differences below $\approx$10\% cannot be trusted. The optimisation study only uses 2024, and the 2009--2010 files (different schema, no location IDs) were not processed.
+
+\paragraph{With more time.} We would use a real multi-node cluster (for example two laptops on the same network) to measure the real cost of the shuffles and a speedup that is not limited by one machine. We would also rewrite the input once into a better layout, keeping only the 9 used columns and partitioning the files by year and month, which is cheaper than building the in-memory cache and allows reading subsets directly. Finally, we would restructure \textit{O2} and repeat every experiment more times on a machine without other load.
+
+% =====================================================================
+\newpage
+\section*{Extra page}
+
+\begingroup
+\renewcommand{\section}[2]{\subsection*{#2}}
+\bibliographystyle{plain}
+\bibliography{references}
+\endgroup
+
+\subsection*{Acknowledgements}
+We used the help of AI tools to scaffold the notebook structures, the profiler extensions, to explain Spark concepts (such as window functions, broadcast joins and shuffle), to help run experiments and to help write the report. All design decisions, optimisations, results and the text were reviewed by the authors.
+
+\subsection*{Individual contributions}
+\begin{tabular}{@{}lp{0.62\linewidth}r@{}}
+\toprule
+Member & Work & Share \\
+\midrule
+Rodrigo Loução 73984 &M1--M3, O2, optimisations 1--2, report sections 3--4 & 60\% \\
+Guilherme Ferreira 78037 & O3, optimisations 3--4, scalability runs, report sections 1--2 \& 5--6 & 40\% \\
+\bottomrule
+\end{tabular}
+
+\subsection*{Comments and suggestions}
+Nothing to add.
+
+\end{document}

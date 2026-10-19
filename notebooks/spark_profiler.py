@@ -92,6 +92,11 @@ _SUM_FIELDS = [
     "shuffleWriteBytes",
     "memoryBytesSpilled",
     "diskBytesSpilled",
+    "inputRecords",
+    "jvmGcTime",
+    "shuffleFetchWaitTime",
+    "shuffleWriteTime",
+    "shuffleRemoteBytesRead",
 ]
 
 _BYTE_FIELDS = {
@@ -190,6 +195,7 @@ class SparkProfiler:
         agg = {field: sum(s.get(field, 0) for s in wanted) for field in _SUM_FIELDS}
         # executorCpuTime is reported in nanoseconds; executorRunTime in ms.
         agg["executorCpuTime"] = agg["executorCpuTime"] // 1_000_000
+        agg["shuffleWriteTime"] = agg["shuffleWriteTime"] // 1_000_000   # also nanoseconds
 
         return {
             "stages": [self._stage_detail(s) for s in sorted(wanted, key=lambda s: s["stageId"])],
@@ -205,6 +211,11 @@ class SparkProfiler:
             "shuffle_write_bytes": agg["shuffleWriteBytes"],
             "memory_spilled_bytes": agg["memoryBytesSpilled"],
             "disk_spilled_bytes": agg["diskBytesSpilled"],
+            "input_records": agg["inputRecords"],
+            "jvm_gc_time_ms": agg["jvmGcTime"],
+            "shuffle_fetch_wait_ms": agg["shuffleFetchWaitTime"],
+            "shuffle_write_time_ms": agg["shuffleWriteTime"],
+            "shuffle_remote_read_bytes": agg["shuffleRemoteBytesRead"],
         }
 
     @staticmethod
@@ -242,6 +253,10 @@ class SparkProfiler:
             "shuffle_write_bytes": s.get("shuffleWriteBytes", 0),
             "memory_spilled_bytes": s.get("memoryBytesSpilled", 0),
             "disk_spilled_bytes": s.get("diskBytesSpilled", 0),
+            "executor_run_time_ms": s.get("executorRunTime", 0),
+            "jvm_gc_time_ms": s.get("jvmGcTime", 0),
+            "shuffle_fetch_wait_ms": s.get("shuffleFetchWaitTime", 0),
+            "peak_execution_memory": s.get("peakExecutionMemory", 0),
         }
 
     def stages(self, name):
@@ -267,6 +282,7 @@ class SparkProfiler:
     _BYTE_KEYS = (
         "input_bytes", "output_bytes", "shuffle_read_bytes",
         "shuffle_write_bytes", "memory_spilled_bytes", "disk_spilled_bytes",
+        "shuffle_remote_read_bytes",
     )
 
     def report(self, names=None):

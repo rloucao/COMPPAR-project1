@@ -131,11 +131,64 @@ are saved to `report/figures/`.
 
 ## Experiments (reproduction log)
 
-_TODO: fill in as experiments are run — one row per run, matching `results/*.json`._
+**Hardware:** Apple M4 (10 cores), 16 GB RAM, macOS 27.0.1. Docker 29.8.2 with
+10 CPUs / 7.75 GB for all containers. Local mode: Java 21.0.8, PySpark 4.0.1.
+Cluster image: Java 17.0.18, Spark 4.0.1.
 
-| Run name | Where | Topology (workers × cores, mem) | Data | Non-default conf | Wall time |
+**Protocol:** each configuration runs once as a discarded warm-up (OS file
+cache, Docker VM memory), then 3 times (`-r1..r3`); the median is reported.
+Only one environment runs at a time (cluster containers stopped during local
+runs). Wall time = sum of the profiled operations M1–O3. Previous runs
+(2026-10-16) are kept in `results/archive/2026-10-16/` for comparison.
+
+| Run name | Where | Topology | Data | Non-default conf | Wall time (median, min–max) |
 |---|---|---|---|---|---|
-| | | | | | |
+| `local-baseline-r1..r3` (2026-10-19) | `local[*]` | 1 JVM, 10 cores, 8 GB driver | 2024 (41.2 M trips) | none | 63.3 s (62.8–72.5) |
+| `cluster-3w-baseline-r1..r3` (2026-10-19) | Docker standalone | 3 workers × 2 cores, 1536m executors, 2g driver | 2024 | image defaults (see above) | 121.1 s (111.0–153.5) |
+| archived (2026-10-16), no warm-up | as above | as above | 2024 | as above | local 64.6 s (61.3–65.9), cluster 102.6 s (96.4–108.2) |
+
+Cluster timings vary with the host's state: on 2026-10-19 the Mac had 23 GB of
+swap in use, and identical runs consumed 517–724 s of executor CPU time (vs.
+434–492 s on 2026-10-16). Before the measurements used for comparisons,
+restart the Mac, close other applications, and re-run the baseline in the same
+session as the optimised runs.
+
+```bash
+scripts/run_pipeline.sh local   -p YEARS 2024 -p RUN_NAME local-baseline-r1 -p EXPLAIN True
+scripts/run_pipeline.sh cluster -p YEARS 2024 -p RUN_NAME cluster-3w-baseline-r1 -p EXPLAIN True
+```
+
+### Optimisation study (2026-10-19)
+
+Each switch is a notebook parameter; all off = baseline. Every configuration ran
+3 times next to a same-session control (`<env>-control-r1..r3`), and its outputs were
+compared value by value with the control's (all identical).
+
+| Config | Switches | Local median (s) | Cluster median (s) |
+|---|---|---|---|
+| `control` | none | 69.1 | 95.8 |
+| `opt1-cache-input` | `-p CACHE_INPUT True` | 33.9 | 48.3 |
+| `opt2-cache-intermediate` | `-p CACHE_INTERMEDIATE True` | 37.6 | 46.1 |
+| `opt3-split16` | `-p READ_SPLIT_MB 16` | 64.2 | – |
+| `opt4-align-keys` | `-p ALIGN_KEYS True` | 64.5 | – |
+| `opt5-broadcast` | `-p BROADCAST_HINTS True` | 55.9 | – |
+| `opt1+2` | opt 1 + opt 2 | 27.8 | 37.7 |
+| `all-opts` | all five | 25.1 | 38.7 |
+
+```bash
+scripts/run_pipeline.sh local -p YEARS 2024 -p RUN_NAME local-opt1-cache-input-r1 -p CACHE_INPUT True
+```
+
+A first batch (before the O2 tie-break fix, with opt 2 also caching O2's `routes`) is
+kept in `results/archive/2026-10-19-batch1/`.
+
+### Scalability (cluster, optimised pipeline = all five switches)
+
+- Data size, 3 workers: `cluster-scale-{1,2,3,6}m-r1` (`-p MONTHS 1`, `1-2`, `1-3`, `1-6`),
+  `cluster-scale-24m-r1` (`-p YEARS 2024-2025`); 12 months = `cluster-all-opts-r1..r3`.
+- Cluster size, full 2024: `cluster-workers-{1,2,4,5}w-r1` after
+  `docker compose up -d --scale spark-worker=N`; 3 workers = `cluster-all-opts-r1..r3`.
+- Figures: run `notebooks/analysis.ipynb`; it writes `report/figures/*.pdf`.
 
 ## Acknowledgements
 
