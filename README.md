@@ -101,6 +101,13 @@ Non-default Spark settings baked into the image (`docker/Dockerfile`):
 the alive workers, so the first job only starts once every executor has
 registered.
 
+### On two machines (real cluster)
+
+A Spark standalone cluster across two computers on the same network (no Docker):
+see [cluster/README.md](cluster/README.md). The driver runs on machine 1 with
+`scripts/run_pipeline.sh lan ...`, and `cluster/run_experiments.sh 1node|2node` runs the
+baseline and the optimised pipeline on one and on two machines.
+
 ### From the command line (papermill)
 
 The brief requires command-line parameters. `scripts/run_pipeline.sh` runs
@@ -189,6 +196,28 @@ kept in `results/archive/2026-10-19-batch1/`.
 - Cluster size, full 2024: `cluster-workers-{1,2,4,5}w-r1` after
   `docker compose up -d --scale spark-worker=N`; 3 workers = `cluster-all-opts-r1..r3`.
 - Figures: run `notebooks/analysis.ipynb`; it writes `report/figures/*.pdf`.
+
+### DI cluster (university, 2026-11-04)
+
+3 identical nodes (charmander-3..5: 32 cores, 125 GB RAM each), Spark 4.0.1 standalone from the
+project's `.venv` in the shared home folder (see [cluster/README.md](cluster/README.md)). Master and
+driver on charmander-3; one worker of 16 cores / 48 GB per node, `EXECUTOR_MEMORY=40g`; input read
+from the shared home folder; outputs computed but not written (`WRITE_OUTPUT=False`, `noop` sink).
+Data: 2024. Each configuration: warm-up + 3 runs, baseline and optimised interleaved.
+
+| Workers (nodes) | Cores | Baseline median (s) | Optimised median (s) |
+|---|---|---|---|
+| 1 | 16 | 109.7 | 45.3 |
+| 2 | 32 | 82.4 | 43.1 |
+| 3 | 48 | 63.9 | 34.8 |
+
+```bash
+cluster/start-worker.sh <master-ip> 16 48g          # on every node
+EXECUTOR_MEMORY=40g cluster/run_experiments.sh 3node # on the master node; results/lan-3node-*.json
+```
+
+Earlier runs on other node sets (a reservation that ended mid-run) are in
+`results/archive/cluster-earlier/` on the cluster and were not used.
 
 ## Acknowledgements
 

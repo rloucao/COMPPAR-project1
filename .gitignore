@@ -27,3 +27,7 @@ report/*.fls
 report/*.bbl
 report/*.blg
 
+
+# Multi-machine cluster: logs, pids and executor work dirs
+cluster/logs/
+cluster/work/
