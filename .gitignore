@@ -29,5 +29,5 @@ report/*.blg
 
 
 # Multi-machine cluster: logs, pids and executor work dirs
-cluster/logs/
-cluster/work/
+scripts/cluster/logs/
+scripts/cluster/work/

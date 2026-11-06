@@ -29,7 +29,7 @@ git clone https://github.com/rloucao/COMPPAR-project1.git   # or: git pull
 cd COMPPAR-project1
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 scripts/download_data.sh 2024        # 12 files, ~690 MB
-cluster/setup.sh                     # must end with "Ready."
+scripts/cluster/setup.sh                     # must end with "Ready."
 ```
 
 **Firewall**: allow incoming connections for **Java** on both machines. On macOS, either
@@ -40,8 +40,8 @@ System Settings > Network > Firewall > Options. On Linux with ufw:
 ## 2. Machine 1: master and its own worker
 
 ```bash
-cluster/start-master.sh                       # prints the master address, e.g. 192.168.1.84
-cluster/start-worker.sh 192.168.1.84 4 6g     # 4 cores, 6 GB for executors
+scripts/cluster/start-master.sh                       # prints the master address, e.g. 192.168.1.84
+scripts/cluster/start-worker.sh 192.168.1.84 4 6g     # 4 cores, 6 GB for executors
 ```
 
 Check http://192.168.1.84:8080: one worker, ALIVE.
@@ -49,7 +49,7 @@ Check http://192.168.1.84:8080: one worker, ALIVE.
 ## 3. Machine 1: experiments with ONE machine
 
 ```bash
-cluster/run_experiments.sh 1node      # warm-up + 3 rounds of baseline and optimised, ~15 min
+scripts/cluster/run_experiments.sh 1node      # warm-up + 3 rounds of baseline and optimised, ~15 min
 ```
 
 ## 4. Machine 2: join the cluster
@@ -58,7 +58,7 @@ Use **the same cores and memory** as machine 1's worker, so that 1 vs 2 machines
 fair comparison:
 
 ```bash
-cluster/start-worker.sh 192.168.1.84 4 6g     # the master's address from step 2
+scripts/cluster/start-worker.sh 192.168.1.84 4 6g     # the master's address from step 2
 ```
 
 Check http://192.168.1.84:8080: two workers, both ALIVE.
@@ -66,7 +66,7 @@ Check http://192.168.1.84:8080: two workers, both ALIVE.
 ## 5. Machine 1: experiments with TWO machines
 
 ```bash
-cluster/run_experiments.sh 2node
+scripts/cluster/run_experiments.sh 2node
 ```
 
 During the runs, don't use either machine for anything heavy. Results:
@@ -77,7 +77,7 @@ that crossed the network ("remote shuffle").
 ## 6. Both machines: stop
 
 ```bash
-cluster/stop.sh
+scripts/cluster/stop.sh
 ```
 
 ## Troubleshooting

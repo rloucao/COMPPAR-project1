@@ -2,7 +2,7 @@
 # Shared settings for the multi-machine Spark standalone cluster.
 # Sourced by the other scripts in this folder and by scripts/run_pipeline.sh (lan mode).
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON="$ROOT/.venv/bin/python"
 # The pip-installed PySpark is a full Spark distribution. Point SPARK_HOME at it
 # explicitly: otherwise spark-class looks for it with the system python3, which
@@ -35,10 +35,10 @@ export SPARK_DAEMON_JAVA_OPTS="${SPARK_DAEMON_JAVA_OPTS:-} -XX:+IgnoreUnrecogniz
 --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED \
 -Djdk.reflect.useDirectMethodHandle=false \
 -Dio.netty.tryReflectionSetAccessible=true"
-LOGS="$ROOT/cluster/logs"
+LOGS="$ROOT/scripts/cluster/logs"
 HOST="$(hostname -s)"   # the home folder (and so cluster/logs) may be shared between machines:
                         # log and pid files carry the machine's name
-export SPARK_WORKER_DIR="$ROOT/cluster/work"   # executor stdout/stderr per application
+export SPARK_WORKER_DIR="$ROOT/scripts/cluster/work"   # executor stdout/stderr per application
 mkdir -p "$LOGS" "$SPARK_WORKER_DIR"
 
 # Executors read the input from their own disk, so it must be at the same absolute

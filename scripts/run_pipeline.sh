@@ -42,7 +42,7 @@ print(sum(w["cores"] for w in workers if w["state"] == "ALIVE"))')"
     # Multi-machine standalone cluster (cluster/README.md); the driver runs on this
     # machine. MASTER_IP defaults to this machine. Outputs are computed but not saved
     # (no shared storage), and the job waits until every alive worker's cores registered.
-    source "$ROOT/cluster/common.sh"
+    source "$ROOT/scripts/cluster/common.sh"
     use_java   # the driver needs Java 17/21 too (on Linux the notebook does not pick one)
     MASTER_IP="${MASTER_IP:-$(lan_ip)}"
     CORES="$(alive_workers_json "$MASTER_IP:$MASTER_UI_PORT" | "$PYTHON" -c 'import json,sys; print(sum(w["cores"] for w in json.load(sys.stdin)))')"

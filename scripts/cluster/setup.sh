@@ -44,7 +44,7 @@ while read -r size name; do
   elif [ "$(wc -c < "$f" | tr -d ' ')" != "$size" ]; then
     echo "        wrong size  $name"; MISSING=$((MISSING + 1))
   fi
-done < "$ROOT/cluster/expected-files.txt"
+done < "$ROOT/scripts/cluster/expected-files.txt"
 if [ "$MISSING" = 0 ]; then ok "data files for $YEARS complete"; else
   fail "$MISSING data file(s) missing or incomplete: run scripts/download_data.sh 2024"; fi
 
